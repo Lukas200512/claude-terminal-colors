@@ -5,9 +5,8 @@
 # https://github.com/Lukas200512/claude-terminal-colors
 # ============================================================
 
-INPUT=$(cat)
+INPUT=$(cat 2>/dev/null || true)
 HOOK_TYPE="$1"
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
 
 # Load user theme or fall back to defaults
 THEME_FILE="${CLAUDE_TERMINAL_THEME:-$HOME/.claude/hooks/theme.conf}"
@@ -26,21 +25,24 @@ COLOR_INPUT="${COLOR_INPUT:-#2a0a0a}"
 COLOR_IDLE="${COLOR_IDLE:-#0f1923}"
 COLOR_DONE="${COLOR_DONE:-#0a1a0a}"
 COLOR_NOTIFY="${COLOR_NOTIFY:-#2a1a00}"
+COLOR_TOOL="${COLOR_TOOL:-#15151f}"
 
-# PostToolUse: reset to idle
-if [ "$HOOK_TYPE" = "post" ]; then
-  COLOR="$COLOR_IDLE"
-else
-  # PreToolUse: set color based on tool
-  case "$TOOL" in
-    Bash)                COLOR="$COLOR_BASH"  ;;
-    Edit|Write)          COLOR="$COLOR_CODE"  ;;
-    Read|Glob|Grep)      COLOR="$COLOR_READ"  ;;
-    Agent)               COLOR="$COLOR_AGENT" ;;
-    AskUserQuestion)     COLOR="$COLOR_INPUT" ;;
-    *)                   COLOR="$COLOR_IDLE"  ;;
-  esac
-fi
+case "$HOOK_TYPE" in
+  stop)   COLOR="$COLOR_DONE"   ;;
+  notify) COLOR="$COLOR_NOTIFY" ;;
+  post)   COLOR="$COLOR_IDLE"   ;;
+  pre|*)
+    TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
+    case "$TOOL" in
+      Bash)                              COLOR="$COLOR_BASH"  ;;
+      Edit|Write|MultiEdit|NotebookEdit) COLOR="$COLOR_CODE"  ;;
+      Read|Glob|Grep)                    COLOR="$COLOR_READ"  ;;
+      Agent|Task)                        COLOR="$COLOR_AGENT" ;;
+      AskUserQuestion)                   COLOR="$COLOR_INPUT" ;;
+      *)                                 COLOR="$COLOR_TOOL"  ;;
+    esac
+    ;;
+esac
 
 # Dedupe consecutive same-color writes. Each write to /dev/tty can
 # yank the terminal out of scrollback (most emulators "scroll on output"),

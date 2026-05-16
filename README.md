@@ -23,6 +23,7 @@ Uses Claude Code [hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) t
 | **Thinking** | Midnight Blue | Default while Claude works |
 | **Done** | Dark Green | Claude finished, your turn |
 | **Notification** | Warm Orange | Background task completed |
+| **Other tool** | Slate | Any tool not in the list above (TodoWrite, WebFetch, MCP, …) |
 
 ## Install
 
@@ -106,6 +107,8 @@ This installer's hook already deduplicates writes (same color in a row → no se
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lukas200512/claude-terminal-colors/main/uninstall.sh | bash
 ```
+
+The uninstaller now also removes the hook entries from `~/.claude/settings.json` automatically (a backup is kept at `settings.json.bak`).
 
 Or manually:
 

@@ -11,12 +11,32 @@ HOOK_DIR="$HOME/.claude/hooks"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 THEME_DIR="$HOME/.claude/hooks/themes"
 
+# Themes shipped with this installer. Add a new entry here and drop a
+# matching <name>.conf into themes/ to ship a new theme.
+THEMES=(dark-minimal ocean monokai)
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
+
+# Detect whether install.sh is being run from a cloned repo (use local
+# files) or piped from curl (download from GitHub).
+SCRIPT_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd 2>/dev/null || echo "")"
+fi
+
+fetch_file() {
+    local rel="$1" dest="$2"
+    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$rel" ]; then
+        cp "$SCRIPT_DIR/$rel" "$dest"
+    else
+        curl -fsSL "$REPO_URL/$rel" -o "$dest"
+    fi
+}
 
 echo ""
 echo -e "${CYAN}  Claude Terminal Colors${NC}"
@@ -33,71 +53,78 @@ fi
 # Check terminal compatibility
 echo -e "${YELLOW}Supported terminals:${NC}"
 echo "  iTerm2, Kitty, Alacritty, WezTerm, Windows Terminal,"
-echo "  GNOME Terminal, Konsole, Hyper, Tabby, Termux"
+echo "  GNOME Terminal, Konsole, Hyper, Tabby, Termux, foot"
 echo ""
 echo -e "${RED}Not supported:${NC}"
 echo "  macOS Terminal.app (does not support OSC 11)"
 echo ""
 
-# Theme selection
+# Theme selection (built from $THEMES so adding a theme = one line above)
 echo -e "${YELLOW}Choose a theme:${NC}"
-echo "  1) Dark Minimal (default) — subtle, low-contrast"
-echo "  2) Ocean — cool blue tones"
-echo "  3) Monokai — classic dev palette"
+i=1
+for t in "${THEMES[@]}"; do
+    suffix=""
+    [ "$i" -eq 1 ] && suffix=" (default)"
+    echo "  $i) $t$suffix"
+    i=$((i + 1))
+done
 echo ""
-read -p "Theme [1/2/3]: " THEME_CHOICE
+read -p "Theme [1-${#THEMES[@]}]: " THEME_CHOICE
 
-case "$THEME_CHOICE" in
-  2) THEME="ocean" ;;
-  3) THEME="monokai" ;;
-  *) THEME="dark-minimal" ;;
-esac
+# Default to first theme on empty / invalid input.
+if [[ "$THEME_CHOICE" =~ ^[0-9]+$ ]] && [ "$THEME_CHOICE" -ge 1 ] && [ "$THEME_CHOICE" -le "${#THEMES[@]}" ]; then
+    THEME="${THEMES[$((THEME_CHOICE - 1))]}"
+else
+    THEME="${THEMES[0]}"
+fi
 
 # Create directories
 mkdir -p "$HOOK_DIR"
 mkdir -p "$THEME_DIR"
 
-# Download files
+# Install files
 echo ""
 echo -e "${CYAN}Installing...${NC}"
 
-curl -fsSL "$REPO_URL/hooks/color.sh" -o "$HOOK_DIR/color.sh"
+fetch_file "hooks/color.sh" "$HOOK_DIR/color.sh"
 chmod +x "$HOOK_DIR/color.sh"
 
-for t in dark-minimal ocean monokai; do
-  curl -fsSL "$REPO_URL/themes/${t}.conf" -o "$THEME_DIR/${t}.conf"
+for t in "${THEMES[@]}"; do
+    fetch_file "themes/${t}.conf" "$THEME_DIR/${t}.conf"
 done
 
 # Set selected theme
 cp "$THEME_DIR/${THEME}.conf" "$HOOK_DIR/theme.conf"
 
-# Configure Claude Code settings
+# Hook configuration we want present. Stop/Notify go through color.sh so
+# theme swaps update *every* state (older versions hard-coded those colors).
+HOOKS_JSON='{
+  "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/color.sh pre"}]}],
+  "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/color.sh post"}]}],
+  "Stop": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/color.sh stop"}]}],
+  "Notification": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/color.sh notify"}]}]
+}'
+
 if [ -f "$SETTINGS_FILE" ]; then
-    echo -e "${YELLOW}Existing settings.json found.${NC}"
+    echo -e "${YELLOW}Existing settings.json found. Backing up to ${SETTINGS_FILE}.bak${NC}"
+    cp "$SETTINGS_FILE" "${SETTINGS_FILE}.bak"
 
-    # Check if hooks already configured
-    if grep -q "color.sh" "$SETTINGS_FILE" 2>/dev/null; then
-        echo -e "${GREEN}Hooks already configured, skipping settings update.${NC}"
-    else
-        echo -e "${YELLOW}Backing up to ${SETTINGS_FILE}.bak${NC}"
-        cp "$SETTINGS_FILE" "${SETTINGS_FILE}.bak"
+    # Idempotent merge: strip any old color hooks (matched by `color.sh` or
+    # the legacy hard-coded OSC 11 strings), then append the canonical set.
+    jq --argjson hooks "$HOOKS_JSON" '
+      def isOurs: (.hooks // []) | map(.command // "") | join(" ") | test("color\\.sh|033\\]11");
+      def clean: map(select(isOurs | not));
+      .hooks //= {}
+      | .hooks.PreToolUse    = (((.hooks.PreToolUse    // []) | clean) + $hooks.PreToolUse)
+      | .hooks.PostToolUse   = (((.hooks.PostToolUse   // []) | clean) + $hooks.PostToolUse)
+      | .hooks.Stop          = (((.hooks.Stop          // []) | clean) + $hooks.Stop)
+      | .hooks.Notification  = (((.hooks.Notification  // []) | clean) + $hooks.Notification)
+    ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" \
+      && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
 
-        # Merge hooks into existing settings using jq
-        HOOKS_JSON='{
-          "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/color.sh pre"}]}],
-          "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/color.sh post"}]}],
-          "Stop": [{"hooks": [{"type": "command", "command": "printf '"'"'\\033]11;#0a1a0a\\007'"'"' > /dev/tty"}]}],
-          "Notification": [{"hooks": [{"type": "command", "command": "printf '"'"'\\033]11;#2a1a00\\007'"'"' > /dev/tty"}]}]
-        }'
-
-        jq --argjson hooks "$HOOKS_JSON" '.hooks = ($hooks + (.hooks // {}))' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" \
-          && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-
-        echo -e "${GREEN}Hooks added to settings.json${NC}"
-    fi
+    echo -e "${GREEN}Hooks merged into settings.json${NC}"
 else
-    # Create new settings.json
-    cat > "$SETTINGS_FILE" << 'SETTINGS'
+    cat > "$SETTINGS_FILE" <<SETTINGS
 {
   "hooks": {
     "PreToolUse": [
@@ -127,7 +154,7 @@ else
         "hooks": [
           {
             "type": "command",
-            "command": "printf '\\033]11;#0a1a0a\\007' > /dev/tty"
+            "command": "bash ~/.claude/hooks/color.sh stop"
           }
         ]
       }
@@ -137,7 +164,7 @@ else
         "hooks": [
           {
             "type": "command",
-            "command": "printf '\\033]11;#2a1a00\\007' > /dev/tty"
+            "command": "bash ~/.claude/hooks/color.sh notify"
           }
         ]
       }
@@ -156,6 +183,9 @@ echo -e "  Hook:  ${CYAN}${HOOK_DIR}/color.sh${NC}"
 echo ""
 echo "  To change theme later:"
 echo "    cp ~/.claude/hooks/themes/<theme>.conf ~/.claude/hooks/theme.conf"
+echo ""
+echo -e "  ${YELLOW}Tip:${NC} if your terminal jumps to the bottom while scrolling,"
+echo -e "  disable \"scroll on output\" / \"follow output\" in its settings."
 echo ""
 echo -e "  ${YELLOW}Restart Claude Code for changes to take effect.${NC}"
 echo ""
