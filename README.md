@@ -84,6 +84,23 @@ cp ~/.claude/hooks/themes/my-theme.conf ~/.claude/hooks/theme.conf
 - `jq` (for parsing hook data)
 - A supported terminal emulator
 
+## Troubleshooting
+
+### Terminal jumps to the bottom when I scroll up
+
+Most terminal emulators have a setting called **"scroll on output"** (sometimes "follow output" or "auto-scroll on output") that snaps the view back to the prompt whenever *anything* is written to the TTY. The color hook writes an OSC 11 escape sequence each time Claude runs a tool, which counts as output — so during long sessions every tool call yanks you out of scrollback.
+
+This installer's hook already deduplicates writes (same color in a row → no second write), which helps a lot, but it can't avoid every emit. To eliminate the jump entirely, disable scroll-on-output in your terminal:
+
+| Terminal | Setting |
+|---|---|
+| iTerm2 | Preferences → Profiles → Terminal → uncheck **"Scroll to bottom on input"** (and the "on output" option if present) |
+| Kitty | `scrollback_pager_history_size` aside, set `scrollback_indicator_opacity` / use `kitty_mod+up` — Kitty doesn't auto-follow by default |
+| Alacritty | `scrolling.auto_scroll: false` in `alacritty.toml` |
+| WezTerm | `config.scroll_to_bottom_on_input = false` |
+| GNOME Terminal | Preferences → Profile → Scrolling → uncheck **"Scroll on output"** |
+| Konsole | Settings → Edit Current Profile → Scrolling → uncheck **"Scroll on output"** |
+
 ## Uninstall
 
 ```bash
